@@ -47,6 +47,7 @@ import java.util.concurrent.Phaser;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.LongAdder;
 
+//LongAdder 源码里居然没有提供UnitTest,只有这个Demo 比较了AtomicLong 和 LongAdder 的性能
 public class LongAdderDemo {
     static final int INCS_PER_THREAD = 10000000;
     static final int NCPU = Runtime.getRuntime().availableProcessors();

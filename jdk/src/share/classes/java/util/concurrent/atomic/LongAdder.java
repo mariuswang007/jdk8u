@@ -82,12 +82,28 @@ public class LongAdder extends Striped64 implements Serializable {
      * @param x the value to add
      */
     public void add(long x) {
+        //as 表示cells引用
+        //b 表示获取的base值
+        //v 表示 期望值
+        //m 表示 cells 数组的长度
+        //a 表示当前线程命中的cell单元格
         Cell[] as; long b, v; int m; Cell a;
+        //条件一: true->表示cells已经初始化过了,当前线程应该将数据写入到对应的cell中
+        //false->表示cells未初始化，当前所有线程应该将数据写到base中
+        //条件二: true->表示当前线程cas替换数据成功，
+        //false->表示发生竞争了，可能需要重试 或者 扩容
         if ((as = cells) != null || !casBase(b = base, b + x)) {
+            //true:未竞争, false:发生竞争
             boolean uncontended = true;
+            // cells未初始化,即未发生竞争,写到base里了 
+            // or cells 已经初始化, m = cells.length - 1
+            // or cells 已经不为空了,当前thread 在 cells 已经有分配好的value了; 
+            //     getProbe() 认为是获取运行线程的hash值, 返回int; 注: & m 是保证hash值在cells数组范围内,cell长度一定是2的幂,比如 15=b1111
+            // or cas 替换数据失败,发生竞争了
             if (as == null || (m = as.length - 1) < 0 ||
                 (a = as[getProbe() & m]) == null ||
                 !(uncontended = a.cas(v = a.value, v + x)))
+
                 longAccumulate(x, null, uncontended);
         }
     }

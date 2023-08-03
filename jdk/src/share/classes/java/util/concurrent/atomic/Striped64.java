@@ -150,11 +150,13 @@ abstract class Striped64 extends Number {
     /**
      * Base value, used mainly when there is no contention, but also as
      * a fallback during table initialization races. Updated via CAS.
+     * 没有发生过竞争时使用的基本值，也用作表初始化竞争期间的后备。通过CAS更新。
      */
     transient volatile long base;
 
     /**
      * Spinlock (locked via CAS) used when resizing and/or creating Cells.
+     * 初始化cells或者扩容cells都需要获取锁, 0表示无锁, 1表示其他线程已经持有锁了
      */
     transient volatile int cellsBusy;
 
@@ -173,6 +175,7 @@ abstract class Striped64 extends Number {
 
     /**
      * CASes the cellsBusy field from 0 to 1 to acquire lock.
+     * 通过cas获取锁
      */
     final boolean casCellsBusy() {
         return UNSAFE.compareAndSwapInt(this, CELLSBUSY, 0, 1);
@@ -181,6 +184,7 @@ abstract class Striped64 extends Number {
     /**
      * Returns the probe value for the current thread.
      * Duplicated from ThreadLocalRandom because of packaging restrictions.
+     * 获取当前线程的hash值
      */
     static final int getProbe() {
         return UNSAFE.getInt(Thread.currentThread(), PROBE);
@@ -190,6 +194,7 @@ abstract class Striped64 extends Number {
      * Pseudo-randomly advances and records the given probe value for the
      * given thread.
      * Duplicated from ThreadLocalRandom because of packaging restrictions.
+     * 重置当前线程的hash值
      */
     static final int advanceProbe(int probe) {
         probe ^= probe << 13;   // xorshift
@@ -217,12 +222,22 @@ abstract class Striped64 extends Number {
         if ((h = getProbe()) == 0) {
             ThreadLocalRandom.current(); // force initialization
             h = getProbe();
+            // 第一次进入, 无竞争
             wasUncontended = true;
         }
+        //扩容意向, true-> 表示当前线程需要扩容cells
         boolean collide = false;                // True if last slot nonempty
+        //自旋
         for (;;) {
+            //as 表示cells引用
+            //a 表示当前线程命中的cell
+            //n 表示cells数组长度
+            //v 表示 期望值
             Cell[] as; Cell a; int n; long v;
+
+            //CASE1: 表示cells已经初始化了，当前线程应该将数据写入到对应的cell中
             if ((as = cells) != null && (n = as.length) > 0) {
+                //CASE1.1:true->表示当前线程对应的下标位置的cell为null，需要创建new Cell
                 if ((a = as[(n - 1) & h]) == null) {
                     if (cellsBusy == 0) {       // Try to attach new Cell
                         Cell r = new Cell(x);   // Optimistically create
@@ -230,6 +245,7 @@ abstract class Striped64 extends Number {
                             boolean created = false;
                             try {               // Recheck under lock
                                 Cell[] rs; int m, j;
+                                //rs[j = (m - 1) & h] == null 为了防止其他线程已经创建了的cell中的数据被覆盖
                                 if ((rs = cells) != null &&
                                     (m = rs.length) > 0 &&
                                     rs[j = (m - 1) & h] == null) {
@@ -246,6 +262,7 @@ abstract class Striped64 extends Number {
                     }
                     collide = false;
                 }
+                //CASE1.2: wasUncontended: 只有cells初始化之后，并且当前线程 竞争修改失败，才会是false
                 else if (!wasUncontended)       // CAS already known to fail
                     wasUncontended = true;      // Continue after rehash
                 else if (a.cas(v = a.value, ((fn == null) ? v + x :
@@ -255,6 +272,7 @@ abstract class Striped64 extends Number {
                     collide = false;            // At max size or stale
                 else if (!collide)
                     collide = true;
+                //真正扩容的逻辑
                 else if (cellsBusy == 0 && casCellsBusy()) {
                     try {
                         if (cells == as) {      // Expand table unless stale
@@ -269,8 +287,14 @@ abstract class Striped64 extends Number {
                     collide = false;
                     continue;                   // Retry with expanded table
                 }
+
+                //重新hash当前线程的hash值
                 h = advanceProbe(h);
             }
+            //CASE2: 前置条件cells还未初始化 as 为null
+            //条件一: true 表示当前未加锁
+            //条件二: cells == as? 因为其它线程可能会在你给as赋值之后修改了 cells
+            //条件三: true 表示获取锁成功
             else if (cellsBusy == 0 && cells == as && casCellsBusy()) {
                 boolean init = false;
                 try {                           // Initialize table
